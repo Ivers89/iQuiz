@@ -20,6 +20,27 @@ let quizTopics = [
     QuizTopic(title: "Science", description: "Test your scientific knowledge!", iconName: "science_icon")
 ]
 
+struct QuizQuestion {
+    let text: String
+    let choices: [String]
+    let correctAnswer: Int
+}
+
+let quizQuestionsByTopic: [String: [QuizQuestion]] = [
+    "Mathematics": [
+        QuizQuestion(text: "What is 9 + 10?", choices: ["21", "19", "910"], correctAnswer: 1),
+        QuizQuestion(text: "What is 5 * 6?", choices: ["11", "30", "60"], correctAnswer: 1)
+    ],
+    "Marvel Super Heroes": [
+        QuizQuestion(text: "Who is Iron First?", choices: ["Shang-Chi", "Luke Cage", "Daniel Rand"], correctAnswer: 2),
+        QuizQuestion(text: "Who is the Deadpool?", choices: ["Loki", "Wade Wilson", "Peter Parker"], correctAnswer: 1)
+    ],
+    "Science": [
+        QuizQuestion(text: "What scale is used to measure the hardness of minerals?", choices: ["Moh's Scale", "Richter Scale", "Pauling scale"], correctAnswer: 0),
+        QuizQuestion(text: "Who was the first American woman in space?", choices: ["Sally Ride", "Valentina Tereshkova", "Mae "], correctAnswer: 1)
+    ]
+]
+
 class ViewController: UITableViewController {
     
     override func viewDidLoad() {
@@ -51,4 +72,20 @@ class ViewController: UITableViewController {
         cell.imageView?.image = UIImage(named: topic.iconName)
         return cell
     }
+    
+    override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
+        tableView.deselectRow(at: indexPath, animated: true)
+
+        let selectedTopic = quizTopics[indexPath.row]
+        let questions = quizQuestionsByTopic[selectedTopic.title] ?? []
+        if let questionVC = storyboard?.instantiateViewController(withIdentifier: "QuestionViewController") as? QuestionViewController {
+            questionVC.topicTitle = selectedTopic.title
+            questionVC.questions = questions
+            questionVC.currentQuestionIndex = 0
+            questionVC.correctAnswers = 0
+
+            navigationController?.pushViewController(questionVC, animated: true)
+        }
+    }
+    
 }
