@@ -21,26 +21,8 @@ struct QuizQuestion {
 
 class ViewController: UITableViewController, SettingsViewControllerDelegate {
 
-    private var quizTopics: [QuizTopic] = [
-        QuizTopic(title: "Mathematics", description: "Try out some math!", iconName: "math_icon"),
-        QuizTopic(title: "Marvel Super Heroes", description: "Do you know your heroes?", iconName: "marvel_icon"),
-        QuizTopic(title: "Science", description: "Test your scientific knowledge!", iconName: "science_icon")
-    ]
-
-    private var quizQuestionsByTopic: [String: [QuizQuestion]] = [
-        "Mathematics": [
-            QuizQuestion(text: "What is 9 + 10?", choices: ["21", "19", "910"], correctAnswer: 1),
-            QuizQuestion(text: "What is 5 * 6?", choices: ["11", "30", "60"], correctAnswer: 1)
-        ],
-        "Marvel Super Heroes": [
-            QuizQuestion(text: "Who is Iron First?", choices: ["Shang-Chi", "Luke Cage", "Daniel Rand"], correctAnswer: 2),
-            QuizQuestion(text: "Who is the Deadpool?", choices: ["Loki", "Wade Wilson", "Peter Parker"], correctAnswer: 1)
-        ],
-        "Science": [
-            QuizQuestion(text: "What scale is used to measure the hardness of minerals?", choices: ["Moh's Scale", "Richter Scale", "Pauling scale"], correctAnswer: 0),
-            QuizQuestion(text: "Who was the first American woman in space?", choices: ["Sally Ride", "Valentina Tereshkova", "Mae Jemison"], correctAnswer: 2)
-        ]
-    ]
+    private var quizTopics: [QuizTopic] = []
+    private var quizQuestionsByTopic: [String: [QuizQuestion]] = [:]
 
     let defaultURL = "https://tednewardsandbox.site44.com/questions.json"
 
@@ -60,10 +42,10 @@ class ViewController: UITableViewController, SettingsViewControllerDelegate {
     }
 
     @objc func showSettings() {
-        let settingsVC = SettingsViewController()
-        settingsVC.delegate = self
-        let navController = UINavigationController(rootViewController: settingsVC)
-        present(navController, animated: true)
+        if let settingsURL = URL(string: UIApplication.openSettingsURLString),
+           UIApplication.shared.canOpenURL(settingsURL) {
+            UIApplication.shared.open(settingsURL)
+        }
     }
 
     func didUpdateQuizURL(_ urlString: String) {
@@ -71,58 +53,24 @@ class ViewController: UITableViewController, SettingsViewControllerDelegate {
     }
 
     func loadQuizData(from urlString: String) {
-        guard let url = URL(string: urlString) else {
-            showAlert(title: "Invalid URL", message: "Could not create URL from the string.")
-            return
-        }
+        guard let url = URL(string: urlString) else { return }
 
         let task = URLSession.shared.dataTask(with: url) { data, response, error in
-            if let error = error {
-                DispatchQueue.main.async {
-                    self.showAlert(title: "Network Error", message: error.localizedDescription)
-                }
-                return
-            }
-
-            guard let data = data else {
-                DispatchQueue.main.async {
-                    self.showAlert(title: "Error", message: "No data received.")
-                }
+            guard let data = data, error == nil else {
+                print("Network error: \(error?.localizedDescription ?? "Unknown error")")
+                self.loadLocalQuizData() // fallback
                 return
             }
 
             do {
-                let decoder = JSONDecoder()
-                let remoteTopics = try decoder.decode([RemoteQuizTopic].self, from: data)
-
-                var localTopics: [QuizTopic] = []
-                var localQuestions: [String: [QuizQuestion]] = [:]
-
-                for remote in remoteTopics {
-                    localTopics.append(
-                        QuizTopic(title: remote.title, description: remote.desc, iconName: "default_icon")
-                    )
-                    let questions = remote.questions.enumerated().map { (index, q) in
-                        // Find correctAnswer index from answer string
-                        let correctIndex = q.answers.firstIndex(of: q.answer) ?? 0
-                        return QuizQuestion(text: q.text, choices: q.answers, correctAnswer: correctIndex)
-                    }
-                    localQuestions[remote.title] = questions
-                }
-
-                DispatchQueue.main.async {
-                    self.quizTopics = localTopics
-                    self.quizQuestionsByTopic = localQuestions
-                    self.tableView.reloadData()
-                }
-
+                try data.write(to: self.localQuizFileURL()) // save locally
+                print("Saved quiz data to: \(self.localQuizFileURL().path)")
+                self.parseQuizData(data)
             } catch {
-                DispatchQueue.main.async {
-                    self.showAlert(title: "JSON Error", message: "Failed to parse quiz data.")
-                }
+                print("Failed to save or parse data: \(error)")
+                self.loadLocalQuizData()
             }
         }
-
         task.resume()
     }
 
@@ -135,8 +83,7 @@ class ViewController: UITableViewController, SettingsViewControllerDelegate {
         let cell = tableView.dequeueReusableCell(withIdentifier: "QuizCell", for: indexPath)
         cell.textLabel?.text = topic.title
         cell.detailTextLabel?.text = topic.description
-
-        // Assign icon based on title dynamically:
+        
         let iconName: String
         switch topic.title.lowercased() {
         case "science!", "science":
@@ -168,10 +115,52 @@ class ViewController: UITableViewController, SettingsViewControllerDelegate {
             navigationController?.pushViewController(questionVC, animated: true)
         }
     }
-
-    func showAlert(title: String, message: String) {
-        let alert = UIAlertController(title: title, message: message, preferredStyle: .alert)
-        alert.addAction(.init(title: "OK", style: .default))
-        present(alert, animated: true)
+    
+    func loadLocalQuizData() {
+        let fileURL = localQuizFileURL()
+        do {
+            let data = try Data(contentsOf: fileURL)
+            parseQuizData(data)
+        } catch {
+            print("Failed to load local quiz data: \(error)")
+        }
     }
+
+    func parseQuizData(_ data: Data) {
+        do {
+            let decoder = JSONDecoder()
+            let remoteTopics = try decoder.decode([RemoteQuizTopic].self, from: data)
+
+            var localTopics: [QuizTopic] = []
+            var localQuestions: [String: [QuizQuestion]] = [:]
+
+            for remote in remoteTopics {
+                let questions = remote.questions.map {
+                    QuizQuestion(
+                        text: $0.text,
+                        choices: $0.answers,
+                        correctAnswer: (Int($0.answer) ?? 1) - 1
+                    )
+                }
+
+                let topic = QuizTopic(title: remote.title, description: remote.desc, iconName: "")
+                localTopics.append(topic)
+                localQuestions[topic.title] = questions
+            }
+
+            DispatchQueue.main.async {
+                self.quizTopics = localTopics
+                self.quizQuestionsByTopic = localQuestions
+                self.tableView.reloadData()
+            }
+        } catch {
+            print("JSON parsing failed: \(error)")
+        }
+    }
+
+    func localQuizFileURL() -> URL {
+        let paths = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)
+        return paths[0].appendingPathComponent("quizdata.json")
+    }
+    
 }
